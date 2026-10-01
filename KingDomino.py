@@ -2,7 +2,8 @@
 1. Mean blur of all pictures in "Cropped and perspective corrected boards"
    -> saved in "Blurred Pictures"
 2. Each blurred 500x500 picture is split into 5x5 tiles (100x100 px each).
-   The mean BGR value of every tile is written on the tile
+   Every tile is filled with its mean BGR color and the values are written
+   on the tile, with a yellow grid around the tiles
    -> saved in "Tile BGR Values"
 Both output folders are emptied every time the program starts.
 """
@@ -68,7 +69,7 @@ def get_tile_bgr(img, row, col):
 
 
 def put_text_outlined(img, text, org, scale=0.4):
-    """White text with a black outline so it is readable on any tile."""
+    """White text with a black outline, the same on every tile."""
     font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.putText(img, text, org, font, scale, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(img, text, org, font, scale, (255, 255, 255), 1, cv2.LINE_AA)
@@ -76,16 +77,17 @@ def put_text_outlined(img, text, org, scale=0.4):
 
 def annotate_tiles(img):
     """
-    Walk over the 5x5 grid, read the BGR value of each 100x100 tile,
-    and draw the grid plus the values on a copy of the image.
-    Returns the annotated image and a dict {(row, col): (B, G, R)}.
+    Walk over the 5x5 grid, compute the mean BGR of each 100x100 tile,
+    fill the ENTIRE tile with that mean color, draw the yellow grid, and
+    write the values on the tile.
+    Returns the mosaic image and a dict {(row, col): (B, G, R)}.
     """
     if img.shape[0] != BOARD_SIZE or img.shape[1] != BOARD_SIZE:
         print(f"[WARN] Image is {img.shape[1]}x{img.shape[0]}, "
               f"resizing to {BOARD_SIZE}x{BOARD_SIZE}")
         img = cv2.resize(img, (BOARD_SIZE, BOARD_SIZE))
 
-    vis = img.copy()
+    vis = np.zeros_like(img)
     values = {}
 
     for row in range(GRID):
@@ -94,8 +96,10 @@ def annotate_tiles(img):
             values[(row, col)] = (b, g, r)
 
             x1, y1 = col * TILE_SIZE, row * TILE_SIZE
-            cv2.rectangle(vis, (x1, y1),
-                          (x1 + TILE_SIZE, y1 + TILE_SIZE), (0, 255, 255), 1)
+            x2, y2 = x1 + TILE_SIZE, y1 + TILE_SIZE
+
+            vis[y1:y2, x1:x2] = (b, g, r)
+            cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 255), 1)
 
             put_text_outlined(vis, f"B:{b}", (x1 + 6, y1 + 35))
             put_text_outlined(vis, f"G:{g}", (x1 + 6, y1 + 55))
