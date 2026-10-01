@@ -26,7 +26,7 @@ TILE_DIR = os.path.join(IMAGE_DIR, "Tile BGR Values")
 CLASSIFIED_DIR = os.path.join(IMAGE_DIR, "Classified Tiles")
 IMAGE_PATTERN = os.path.join(IMAGE_DIR, "*.jpg")
 
-KERNEL_SIZE = (5, 5)   # mean blur window
+KERNEL_SIZE = (40, 40)   # mean blur window
 TILE_SIZE = 100        # pixels per tile (width and height)
 GRID = 5               # 5 x 5 tiles
 BOARD_SIZE = TILE_SIZE * GRID  # 500
@@ -38,11 +38,11 @@ MARGIN = 0
 # name: ((B_min, G_min, R_min), (B_max, G_max, R_max))  -- raw values from the table
 BASE_RANGES = {
     "Wheat":     ((5,   146, 170), (18,  168, 188)),
-    "Forest":    ((17,  61,  44),  (39,  67,  56)),
-    "Lake":      ((109, 78,  5),   (162, 87,  50)),
+    "Forest":    ((13,  53,  40),  (39,  67,  56)),
+    "Lake":      ((101, 75,  5),   (162, 88,  50)),
     "Grassland": ((20,  112, 97),  (36,  151, 113)),
     "Swamp":     ((42,  96,  110), (95,  128, 133)),
-    "Mine":      ((28,  58,  66),  (37,  66,  79)),
+    "Mine":      ((32,  62,  70),  (33,  62,  75)),
     "Table":     ((26,  94,  128), (110, 152, 176)),
 }
 
