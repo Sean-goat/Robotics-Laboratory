@@ -2,10 +2,12 @@
 1. Mean blur of all pictures in "Cropped and perspective corrected boards"
    -> saved in "Blurred Pictures"
 2. Each blurred 500x500 picture is split into 5x5 tiles (100x100 px each).
-   Every tile is filled with its mean BGR color and the values are written
-   on the tile, with a yellow grid around the tiles
+   Every tile is filled with its mean BGR color, with the values written on it
    -> saved in "Tile BGR Values"
-Both output folders are emptied every time the program starts.
+3. Each tile's mean BGR is classified with BGR min/max thresholds. The tile
+   name is written on the ORIGINAL (unblurred) picture. Unsure tiles get no text
+   -> saved in "Classified Tiles"
+All output folders are emptied every time the program starts.
 """
 
 import cv2
@@ -21,12 +23,44 @@ import shutil
 IMAGE_DIR = "Cropped and perspective corrected boards"
 BLURRED_DIR = os.path.join(IMAGE_DIR, "Blurred Pictures")
 TILE_DIR = os.path.join(IMAGE_DIR, "Tile BGR Values")
+CLASSIFIED_DIR = os.path.join(IMAGE_DIR, "Classified Tiles")
 IMAGE_PATTERN = os.path.join(IMAGE_DIR, "*.jpg")
 
 KERNEL_SIZE = (5, 5)   # mean blur window
 TILE_SIZE = 100        # pixels per tile (width and height)
 GRID = 5               # 5 x 5 tiles
 BOARD_SIZE = TILE_SIZE * GRID  # 500
+
+# Extra tolerance added around every min/max range (0 = exactly your table).
+# Increase it (e.g. 5 or 10) if too many tiles end up "unsure".
+MARGIN = 0
+
+# name: ((B_min, G_min, R_min), (B_max, G_max, R_max))  -- raw values from the table
+BASE_RANGES = {
+    "Wheat":     ((5,   146, 170), (18,  168, 188)),
+    "Forest":    ((17,  61,  44),  (39,  67,  56)),
+    "Lake":      ((109, 78,  5),   (162, 87,  50)),
+    "Grassland": ((20,  112, 97),  (36,  151, 113)),
+    "Swamp":     ((42,  96,  110), (95,  128, 133)),
+    "Mine":      ((28,  58,  66),  (37,  66,  79)),
+    "Table":     ((26,  94,  128), (110, 152, 176)),
+}
+
+BUFFER = 12  # tolerance added around every range
+
+
+def build_thresholds(buffer):
+    """Widen every range by the buffer and clamp to the valid 0-255 range."""
+    out = {}
+    for name, (lo, hi) in BASE_RANGES.items():
+        out[name] = (
+            tuple(max(0, v - buffer) for v in lo),
+            tuple(min(255, v + buffer) for v in hi),
+        )
+    return out
+
+
+THRESHOLDS = build_thresholds(BUFFER)
 
 
 # ----------------------------------------------------------------------
@@ -60,6 +94,15 @@ def mean_blur_image(image_path, kernel_size=KERNEL_SIZE):
 # TILE BGR VALUES
 # ----------------------------------------------------------------------
 
+def fix_size(img):
+    """Make sure the image is exactly 500x500."""
+    if img.shape[0] != BOARD_SIZE or img.shape[1] != BOARD_SIZE:
+        print(f"[WARN] Image is {img.shape[1]}x{img.shape[0]}, "
+              f"resizing to {BOARD_SIZE}x{BOARD_SIZE}")
+        img = cv2.resize(img, (BOARD_SIZE, BOARD_SIZE))
+    return img
+
+
 def get_tile_bgr(img, row, col):
     """Return the mean (B, G, R) of the 100x100 tile at (row, col)."""
     y1, x1 = row * TILE_SIZE, col * TILE_SIZE
@@ -77,16 +120,11 @@ def put_text_outlined(img, text, org, scale=0.4):
 
 def annotate_tiles(img):
     """
-    Walk over the 5x5 grid, compute the mean BGR of each 100x100 tile,
-    fill the ENTIRE tile with that mean color, draw the yellow grid, and
-    write the values on the tile.
+    Compute the mean BGR of each 100x100 tile, fill the tile with it,
+    draw the yellow grid, and write the values on the tile.
     Returns the mosaic image and a dict {(row, col): (B, G, R)}.
     """
-    if img.shape[0] != BOARD_SIZE or img.shape[1] != BOARD_SIZE:
-        print(f"[WARN] Image is {img.shape[1]}x{img.shape[0]}, "
-              f"resizing to {BOARD_SIZE}x{BOARD_SIZE}")
-        img = cv2.resize(img, (BOARD_SIZE, BOARD_SIZE))
-
+    img = fix_size(img)
     vis = np.zeros_like(img)
     values = {}
 
@@ -109,12 +147,57 @@ def annotate_tiles(img):
 
 
 # ----------------------------------------------------------------------
+# CLASSIFICATION
+# ----------------------------------------------------------------------
+
+def classify_tile(bgr):
+    """
+    Return the tile name whose buffered range contains the mean BGR.
+    If several ranges match, pick the one whose original range center
+    is closest. Return None (unsure) if nothing matches.
+    """
+    matches = []
+    for name, (lo, hi) in THRESHOLDS.items():
+        if all(lo[i] <= bgr[i] <= hi[i] for i in range(3)):
+            base_lo, base_hi = BASE_RANGES[name]
+            center = [(base_lo[i] + base_hi[i]) / 2 for i in range(3)]
+            dist = sum((bgr[i] - center[i]) ** 2 for i in range(3)) ** 0.5
+            matches.append((dist, name))
+
+    if not matches:
+        return None
+    return min(matches)[1]
+
+
+def put_label_centered(img, text, x1, y1):
+    """Write text centered on the tile whose top-left corner is (x1, y1)."""
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.45
+    (w, h), _ = cv2.getTextSize(text, font, scale, 1)
+    org = (x1 + (TILE_SIZE - w) // 2, y1 + (TILE_SIZE + h) // 2)
+    put_text_outlined(img, text, org, scale)
+
+
+def draw_classification(original, values):
+    """Write the tile names on a copy of the original picture."""
+    vis = fix_size(original).copy()
+    labels = {}
+    for (row, col), bgr in values.items():
+        name = classify_tile(bgr)
+        labels[(row, col)] = name
+        if name is not None:
+            put_label_centered(vis, name, col * TILE_SIZE, row * TILE_SIZE)
+    return vis, labels
+
+
+# ----------------------------------------------------------------------
 # MAIN
 # ----------------------------------------------------------------------
 
 def main():
     prepare_folder(BLURRED_DIR)
     prepare_folder(TILE_DIR)
+    prepare_folder(CLASSIFIED_DIR)
 
     files = sorted(glob.glob(IMAGE_PATTERN))
     if not files:
@@ -127,23 +210,27 @@ def main():
         cv2.imwrite(os.path.join(BLURRED_DIR, os.path.basename(f)), blurred)
         print(f"[BLUR] {os.path.basename(f)}")
 
-    # Step 2: read tile BGR values from the blurred pictures
-    blurred_files = sorted(glob.glob(os.path.join(BLURRED_DIR, "*.jpg")))
-    for f in blurred_files:
-        img = cv2.imread(f)
-        if img is None:
-            print(f"[SKIP] Could not read {f}")
+    # Step 2 + 3: tile values from blurred pictures, labels on originals
+    for f in files:
+        name = os.path.basename(f)
+        blurred = cv2.imread(os.path.join(BLURRED_DIR, name))
+        original = cv2.imread(f)
+        if blurred is None or original is None:
+            print(f"[SKIP] Could not read {name}")
             continue
 
-        vis, values = annotate_tiles(img)
-        out_path = os.path.join(TILE_DIR, os.path.basename(f))
-        cv2.imwrite(out_path, vis)
+        mosaic, values = annotate_tiles(blurred)
+        cv2.imwrite(os.path.join(TILE_DIR, name), mosaic)
 
-        print(f"\n{os.path.basename(f)}")
+        classified, labels = draw_classification(original, values)
+        cv2.imwrite(os.path.join(CLASSIFIED_DIR, name), classified)
+
+        print(f"\n{name}")
         for (row, col), (b, g, r) in values.items():
-            print(f"  tile ({row},{col}): B={b:3d} G={g:3d} R={r:3d}")
+            label = labels[(row, col)] or "unsure"
+            print(f"  tile ({row},{col}): B={b:3d} G={g:3d} R={r:3d}  -> {label}")
 
-    print(f"\nDone. Annotated images saved in '{TILE_DIR}'")
+    print(f"\nDone. Classified images saved in '{CLASSIFIED_DIR}'")
 
 
 if __name__ == "__main__":
