@@ -1,13 +1,17 @@
 """
-1. Mean blur of all pictures in "Cropped and perspective corrected boards"
-   -> saved in "Blurred Pictures"
-2. Each blurred 500x500 picture is split into 5x5 tiles (100x100 px each).
-   Every tile is filled with its mean BGR color, with the values written on it
-   -> saved in "Tile BGR Values"
-3. Each tile's mean BGR is classified with BGR min/max thresholds. The tile
-   name is written on the ORIGINAL (unblurred) picture. Unsure tiles get no text
+For every picture in "Cropped and perspective corrected boards":
+1. A mean blur is applied to the image in memory (nothing is saved).
+2. The blurred 500x500 image is split into 5x5 tiles (100x100 px each).
+   The mean color of every tile is taken, converted to HSV, and shown as a
+   mosaic with the mean HSV values written on each tile
+   -> saved in "Tile HSV Values"
+3. Each tile's mean HSV is classified (terrain types + crown tiles) with HSV
+   thresholds. The closest type is written on the ORIGINAL (unblurred)
+   picture. Exactly one tile per picture is always classified as a crown tile
    -> saved in "Classified Tiles"
-All output folders are emptied every time the program starts.
+Both output folders are emptied every time the program starts.
+
+OpenCV HSV ranges: H = 0-179, S = 0-255, V = 0-255
 """
 
 import cv2
@@ -21,46 +25,62 @@ import shutil
 # ----------------------------------------------------------------------
 
 IMAGE_DIR = "Cropped and perspective corrected boards"
-BLURRED_DIR = os.path.join(IMAGE_DIR, "Blurred Pictures")
-TILE_DIR = os.path.join(IMAGE_DIR, "Tile BGR Values")
+TILE_DIR = os.path.join(IMAGE_DIR, "Tile HSV Values")
 CLASSIFIED_DIR = os.path.join(IMAGE_DIR, "Classified Tiles")
 IMAGE_PATTERN = os.path.join(IMAGE_DIR, "*.jpg")
 
-KERNEL_SIZE = (40, 40)   # mean blur window
+KERNEL_SIZE = (5, 5)   # mean blur window
 TILE_SIZE = 100        # pixels per tile (width and height)
 GRID = 5               # 5 x 5 tiles
 BOARD_SIZE = TILE_SIZE * GRID  # 500
 
-# Extra tolerance added around every min/max range (0 = exactly your table).
-# Increase it (e.g. 5 or 10) if too many tiles end up "unsure".
-MARGIN = 0
-
-# name: ((B_min, G_min, R_min), (B_max, G_max, R_max))  -- raw values from the table
-BASE_RANGES = {
-    "Wheat":     ((5,   146, 170), (18,  168, 188)),
-    "Forest":    ((13,  53,  40),  (39,  67,  56)),
-    "Lake":      ((101, 75,  5),   (162, 88,  50)),
-    "Grassland": ((20,  112, 97),  (36,  151, 113)),
-    "Swamp":     ((42,  96,  110), (95,  128, 133)),
-    "Mine":      ((32,  62,  70),  (33,  62,  75)),
-    "Table":     ((26,  94,  128), (110, 152, 176)),
+# name: ((H_min, S_min, V_min), (H_max, S_max, V_max))  -- raw values from the tables
+TERRAIN_RANGES = {
+    "Wheat":     ((25,  115, 131), (26,  245, 195)),
+    "Forest":    ((32,  100, 49),  (46,  186, 75)),
+    "Lake":      ((103, 162, 105), (105, 247, 159)),
+    "Grassland": ((33,  146, 108), (44,  194, 158)),
+    "Swamp":     ((21,  60,  85),  (23,  147, 135)),
+    "Mine":      ((17,  118, 55),  (20,  166, 85)),
+    "Table":     ((19,  92,  128), (22,  203, 172)),
 }
 
-BUFFER = 12  # tolerance added around every range
+CROWN_RANGES = {
+    "Y Crown": ((29, 95, 70),  (33, 121, 146)),
+    "R Crown": ((19, 60, 72),  (21, 145, 135)),
+    "G Crown": ((31, 64, 48),  (40, 114, 112)),
+    "B Crown": ((40, 21, 55),  (69, 33,  131)),
+}
 
+BASE_RANGES = {**TERRAIN_RANGES, **CROWN_RANGES}
+
+# Tolerance added around each range, per channel (H, S, V)
+BUFFER = (3, 15, 15)
+
+# Position prior for the crown tile (row, col). Set to None to disable.
+CROWN_POSITION = (2, 2)
+CROWN_POSITION_BONUS = 100   # was 0.5, now the middle tile is always the crown tile
+
+# How strongly the position counts. About 0.5 = strong hint, 100 = always forced.
+CROWN_POSITION_BONUS = 0.5
 
 def build_thresholds(buffer):
-    """Widen every range by the buffer and clamp to the valid 0-255 range."""
+    """Widen every range by the buffer and clamp to the valid HSV range."""
+    max_vals = (179, 255, 255)
     out = {}
     for name, (lo, hi) in BASE_RANGES.items():
         out[name] = (
-            tuple(max(0, v - buffer) for v in lo),
-            tuple(min(255, v + buffer) for v in hi),
+            tuple(max(0, lo[i] - buffer[i]) for i in range(3)),
+            tuple(min(max_vals[i], hi[i] + buffer[i]) for i in range(3)),
         )
     return out
 
 
 THRESHOLDS = build_thresholds(BUFFER)
+
+
+def is_crown(name):
+    return name in CROWN_RANGES
 
 
 # ----------------------------------------------------------------------
@@ -80,18 +100,7 @@ def prepare_folder(folder):
 
 
 # ----------------------------------------------------------------------
-# BLURRING
-# ----------------------------------------------------------------------
-
-def mean_blur_image(image_path, kernel_size=KERNEL_SIZE):
-    img = cv2.imread(image_path)
-    if img is None:
-        raise FileNotFoundError(f"Could not read image: {image_path}")
-    return cv2.blur(img, kernel_size)
-
-
-# ----------------------------------------------------------------------
-# TILE BGR VALUES
+# TILE HSV VALUES
 # ----------------------------------------------------------------------
 
 def fix_size(img):
@@ -111,8 +120,15 @@ def get_tile_bgr(img, row, col):
     return int(round(b)), int(round(g)), int(round(r))
 
 
+def bgr_to_hsv(bgr):
+    """Convert one (B, G, R) color to OpenCV (H, S, V)."""
+    pixel = np.uint8([[list(bgr)]])
+    h, s, v = cv2.cvtColor(pixel, cv2.COLOR_BGR2HSV)[0][0]
+    return int(h), int(s), int(v)
+
+
 def put_text_outlined(img, text, org, scale=0.4):
-    """White text with a black outline, the same on every tile."""
+    """White text with a black outline, the same everywhere."""
     font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.putText(img, text, org, font, scale, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(img, text, org, font, scale, (255, 255, 255), 1, cv2.LINE_AA)
@@ -120,28 +136,30 @@ def put_text_outlined(img, text, org, scale=0.4):
 
 def annotate_tiles(img):
     """
-    Compute the mean BGR of each 100x100 tile, fill the tile with it,
-    draw the yellow grid, and write the values on the tile.
-    Returns the mosaic image and a dict {(row, col): (B, G, R)}.
+    Blur the image in memory, then compute the mean color of each 100x100
+    tile, fill the tile with it, draw the yellow grid, and write the mean
+    H, S, V on the tile.
+    Returns the mosaic image and a dict {(row, col): (H, S, V)}.
     """
-    img = fix_size(img)
+    img = cv2.blur(fix_size(img), KERNEL_SIZE)
     vis = np.zeros_like(img)
     values = {}
 
     for row in range(GRID):
         for col in range(GRID):
-            b, g, r = get_tile_bgr(img, row, col)
-            values[(row, col)] = (b, g, r)
+            bgr = get_tile_bgr(img, row, col)
+            h, s, v = bgr_to_hsv(bgr)
+            values[(row, col)] = (h, s, v)
 
             x1, y1 = col * TILE_SIZE, row * TILE_SIZE
             x2, y2 = x1 + TILE_SIZE, y1 + TILE_SIZE
 
-            vis[y1:y2, x1:x2] = (b, g, r)
+            vis[y1:y2, x1:x2] = bgr
             cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 255), 1)
 
-            put_text_outlined(vis, f"B:{b}", (x1 + 6, y1 + 35))
-            put_text_outlined(vis, f"G:{g}", (x1 + 6, y1 + 55))
-            put_text_outlined(vis, f"R:{r}", (x1 + 6, y1 + 75))
+            put_text_outlined(vis, f"H:{h}", (x1 + 6, y1 + 35))
+            put_text_outlined(vis, f"S:{s}", (x1 + 6, y1 + 55))
+            put_text_outlined(vis, f"V:{v}", (x1 + 6, y1 + 75))
 
     return vis, values
 
@@ -150,23 +168,75 @@ def annotate_tiles(img):
 # CLASSIFICATION
 # ----------------------------------------------------------------------
 
-def classify_tile(bgr):
-    """
-    Return the tile name whose buffered range contains the mean BGR.
-    If several ranges match, pick the one whose original range center
-    is closest. Return None (unsure) if nothing matches.
-    """
-    matches = []
-    for name, (lo, hi) in THRESHOLDS.items():
-        if all(lo[i] <= bgr[i] <= hi[i] for i in range(3)):
-            base_lo, base_hi = BASE_RANGES[name]
-            center = [(base_lo[i] + base_hi[i]) / 2 for i in range(3)]
-            dist = sum((bgr[i] - center[i]) ** 2 for i in range(3)) ** 0.5
-            matches.append((dist, name))
+def score_against(hsv, name):
+    lo, hi = THRESHOLDS[name]
+    blo, bhi = BASE_RANGES[name]
+    score = 0.0
+    for i in range(3):
+        center = (blo[i] + bhi[i]) / 2
+        half = max((hi[i] - lo[i]) / 2, 1)
+        score += ((hsv[i] - center) / half) ** 2
+    
+    final_score = score ** 0.5
+    
+    # Give Crown candidates a 25% boost in confidence:
+    if is_crown(name):
+        final_score *= 0.75  
+        
+    return final_score
 
-    if not matches:
-        return None
-    return min(matches)[1]
+
+def classify_tile(hsv, allowed=None):
+    """
+    Return (name, score) of the closest type. If 'allowed' is given, only
+    those types are considered.
+    """
+    names = allowed if allowed is not None else list(THRESHOLDS)
+    best_name, best_score = None, float("inf")
+    for name in names:
+        s = score_against(hsv, name)
+        if s < best_score:
+            best_name, best_score = name, s
+    return best_name, best_score
+
+
+def classify_all(values):
+    """Classify all 25 tiles. Returns {(row, col): (name, score)}."""
+    return {pos: classify_tile(hsv) for pos, hsv in values.items()}
+
+
+def enforce_single_crown(results, values, image_name):
+    """
+    Guarantee exactly one crown tile per picture.
+
+    Every tile gets a 'crown-likeness' margin: the score of its best crown
+    type minus the score of its best terrain type. The lower the margin, the
+    more the tile looks like a crown tile.
+    - 0 crown tiles: the tile with the lowest margin becomes the crown tile.
+    - 2 or more: only the tile with the lowest margin stays a crown tile,
+      the others go back to their closest terrain type.
+    """
+    terrain = list(TERRAIN_RANGES)
+    crowns = list(CROWN_RANGES)
+
+    best_terrain = {pos: classify_tile(hsv, allowed=terrain) for pos, hsv in values.items()}
+    best_crown = {pos: classify_tile(hsv, allowed=crowns) for pos, hsv in values.items()}
+    margin = {pos: best_crown[pos][1] - best_terrain[pos][1] for pos in values}
+
+    if CROWN_POSITION is not None:
+        margin[CROWN_POSITION] -= CROWN_POSITION_BONUS
+
+    winner = min(margin, key=margin.get)
+
+    current = [pos for pos, (name, _) in results.items() if is_crown(name)]
+    if current != [winner]:
+        print(f"[CHECK] {image_name}: found {len(current)} crown tiles, "
+              f"forced to one at tile {winner}")
+
+    for pos in values:
+        results[pos] = best_crown[pos] if pos == winner else best_terrain[pos]
+
+    return results
 
 
 def put_label_centered(img, text, x1, y1):
@@ -178,16 +248,13 @@ def put_label_centered(img, text, x1, y1):
     put_text_outlined(img, text, org, scale)
 
 
-def draw_classification(original, values):
+def draw_classification(original, results):
     """Write the tile names on a copy of the original picture."""
     vis = fix_size(original).copy()
-    labels = {}
-    for (row, col), bgr in values.items():
-        name = classify_tile(bgr)
-        labels[(row, col)] = name
-        if name is not None:
-            put_label_centered(vis, name, col * TILE_SIZE, row * TILE_SIZE)
-    return vis, labels
+    for (row, col), (name, _) in results.items():
+        label = "Crown" if is_crown(name) else name
+        put_label_centered(vis, label, col * TILE_SIZE, row * TILE_SIZE)
+    return vis
 
 
 # ----------------------------------------------------------------------
@@ -195,7 +262,6 @@ def draw_classification(original, values):
 # ----------------------------------------------------------------------
 
 def main():
-    prepare_folder(BLURRED_DIR)
     prepare_folder(TILE_DIR)
     prepare_folder(CLASSIFIED_DIR)
 
@@ -204,31 +270,30 @@ def main():
         print(f"[WARN] No .jpg images found in '{IMAGE_DIR}'")
         return
 
-    # Step 1: blur
-    for f in files:
-        blurred = mean_blur_image(f)
-        cv2.imwrite(os.path.join(BLURRED_DIR, os.path.basename(f)), blurred)
-        print(f"[BLUR] {os.path.basename(f)}")
-
-    # Step 2 + 3: tile values from blurred pictures, labels on originals
     for f in files:
         name = os.path.basename(f)
-        blurred = cv2.imread(os.path.join(BLURRED_DIR, name))
         original = cv2.imread(f)
-        if blurred is None or original is None:
+        if original is None:
             print(f"[SKIP] Could not read {name}")
             continue
 
-        mosaic, values = annotate_tiles(blurred)
+        # Blur in memory -> tile means -> HSV values
+        mosaic, values = annotate_tiles(original)
         cv2.imwrite(os.path.join(TILE_DIR, name), mosaic)
 
-        classified, labels = draw_classification(original, values)
+        # Classify, force exactly one crown tile, write labels on the original
+        results = classify_all(values)
+        results = enforce_single_crown(results, values, name)
+
+        classified = draw_classification(original, results)
         cv2.imwrite(os.path.join(CLASSIFIED_DIR, name), classified)
 
         print(f"\n{name}")
-        for (row, col), (b, g, r) in values.items():
-            label = labels[(row, col)] or "unsure"
-            print(f"  tile ({row},{col}): B={b:3d} G={g:3d} R={r:3d}  -> {label}")
+        for (row, col), (h, s, v) in values.items():
+            label, score = results[(row, col)]
+            label = "Crown" if is_crown(label) else label
+            print(f"  tile ({row},{col}): H={h:3d} S={s:3d} V={v:3d}  "
+                  f"-> {label} (score {score:.2f})")
 
     print(f"\nDone. Classified images saved in '{CLASSIFIED_DIR}'")
 
