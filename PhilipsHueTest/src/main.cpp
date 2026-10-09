@@ -2,41 +2,47 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-// === 1. Put Your Home Wi-Fi Details Here ===
+// === Wi-Fi Credentials ===
 const char* ssid     = "ICO-3CDEDB";
 const char* password = "avvufutKarj7";
 
-// === 2. Your Confirmed Philips Hue Details ===
+// === Philips Hue Bridge Settings ===
 const char* hueBridgeIP = "192.168.0.161";
-const char* hueUser     = "dsOZKVQZU7RR9P-jBnJY1CrlUduebKzrytGLYehP";
-const int   groupId     = 5; // "0 = the entire house, 5 = Sean værelse"
+const char* hueUsername = "vPADFQtPb5GarFNcyjuReSGZNFJLG-y3f88PS0BQ";
+const int groupId       = 5; // "Sean værelse" (contains lights 8, 11, 12, 15)
 
-// === 3. Hardware Button ===
-// Top button on the LILYGO T-Display is GPIO 35
-#define BUTTON_PIN 35 
+// === Hardware Pin ===
+#define POT_PIN 32
 
-bool roomState = false;
+// === Timing & Filtering ===
+int lastSentBri = -1;
+unsigned long lastSendTime = 0;
+const unsigned long SEND_INTERVAL_MS = 100; // Limit requests to 10 Hz max
 
-void setRoomLights(bool turnOn) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi not connected!");
-    return;
-  }
+void setHueBrightness(int bri) {
+  if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
-  String url = String("http://") + hueBridgeIP + "/api/" + hueUser + "/groups/" + String(groupId) + "/action";
+  // Use /groups/<id>/action for controlling an entire room
+  String url = String("http://") + hueBridgeIP + "/api/" + hueUsername + "/groups/" + groupId + "/action";
 
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
 
-  String payload = turnOn ? "{\"on\":true}" : "{\"on\":false}";
-  Serial.printf("Sending to Room %d: %s\n", groupId, payload.c_str());
+  String payload;
+  if (bri <= 0) {
+    // If turned all the way down, switch off the entire room
+    payload = "{\"on\":false}";
+  } else {
+    // Keep brightness within valid Hue range [1, 254]
+    int safeBri = constrain(bri, 1, 254);
+    payload = "{\"on\":true,\"bri\":" + String(safeBri) + ",\"transitiontime\":1}";
+  }
 
   int httpCode = http.PUT(payload);
-
   if (httpCode > 0) {
-    String resp = http.getString();
-    Serial.printf("Response [%d]: %s\n", httpCode, resp.c_str());
+    String response = http.getString();
+    Serial.printf("Room Bri: %d (HTTP %d) -> %s\n", bri, httpCode, response.c_str());
   } else {
     Serial.printf("HTTP PUT failed: %s\n", http.errorToString(httpCode).c_str());
   }
@@ -46,33 +52,36 @@ void setRoomLights(bool turnOn) {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  delay(1000);
 
-  Serial.printf("\nConnecting to %s", ssid);
+  Serial.printf("Connecting to Wi-Fi: %s", ssid);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-
-  Serial.println("\nWiFi connected!");
+  Serial.println("\nWi-Fi connected!");
   Serial.print("ESP32 IP: ");
   Serial.println(WiFi.localIP());
-  Serial.println("Ready! Press the top button (GPIO 35) to toggle Sean værelse.");
 }
 
 void loop() {
-  // Read button (active LOW on GPIO 35)
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    delay(50); // Software debounce
-    if (digitalRead(BUTTON_PIN) == LOW) {
-      roomState = !roomState;
-      setRoomLights(roomState);
+  // 1. Read calibrated millivolts
+  float measuredVolts = analogReadMilliVolts(POT_PIN) / 1000.0f;
 
-      // Wait until button is released
-      while (digitalRead(BUTTON_PIN) == LOW) {
-        delay(10);
-      }
-    }
+  // 2. Compensate for ESP32 ADC non-linear dead zones (0.15V to 3.15V)
+  float cleanVolts = constrain(measuredVolts, 0.15f, 3.15f);
+
+  // 3. Map linear voltage to Hue brightness: 0 (off) to 254 (max)
+  int targetBri = (int)(((cleanVolts - 0.15f) / (3.15f - 0.15f)) * 254.0f);
+
+  // 4. Rate-limit and apply deadband to avoid flooding the Zigbee network
+  unsigned long now = millis();
+  if (abs(targetBri - lastSentBri) >= 4 && (now - lastSendTime >= SEND_INTERVAL_MS)) {
+    lastSentBri = targetBri;
+    lastSendTime = now;
+    setHueBrightness(targetBri);
   }
+
+  delay(20);
 }
