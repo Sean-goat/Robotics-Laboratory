@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 #include <TFT_eSPI.h>
 #include <ArduinoJson.h>
+#include <time.h>
 
 // === Wi-Fi Credentials ===
 const char* ssid     = "ICO-3CDEDB";
@@ -12,6 +13,10 @@ const char* password = "avvufutKarj7";
 const char* hueBridgeIP = "192.168.0.161";
 const char* hueUsername = "vPADFQtPb5GarFNcyjuReSGZNFJLG-y3f88PS0BQ";
 const int groupId       = 5; // "Sean værelse"
+
+// === NTP Time Configuration (Denmark / Central European Time with DST) ===
+const char* ntpServer = "dk.pool.ntp.org";
+const char* tzInfo    = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 // === Hardware Pins ===
 #define POT_PIN      32  // Potentiometer wiper (ADC)
@@ -53,7 +58,12 @@ unsigned long lastSendTime = 0;
 const unsigned long SEND_INTERVAL_MS = 250;
 const int BRI_DEADBAND = 10;
 
-// UI State Cache to prevent flicker
+// === Wake-Up Alarm State ===
+bool wakeUpTriggeredToday = false;
+unsigned long lastClockTick = 0;
+String lastDrawnTime = "";
+
+// UI State Cache
 int lastDrawnPercent = -1;
 bool lastDrawnPower = false;
 String lastDrawnScene = "";
@@ -75,13 +85,12 @@ void updateDisplay(int percent, bool forceRedraw = false) {
   // 1. Power Circle (Filled when ON, Hollow when OFF)
   if (forceRedraw || (isLightOn != lastDrawnPower)) {
     lastDrawnPower = isLightOn;
-    tft.fillCircle(210, 20, 12, TFT_BLACK);
+    tft.fillCircle(222, 20, 10, TFT_BLACK);
 
     if (isLightOn) {
-      tft.fillCircle(210, 20, 10, TFT_YELLOW);
+      tft.fillCircle(222, 20, 8, TFT_YELLOW);
     } else {
-      tft.drawCircle(210, 20, 10, TFT_WHITE);
-      tft.drawCircle(210, 20, 9, TFT_WHITE);
+      tft.drawCircle(222, 20, 8, TFT_WHITE);
     }
   }
 
@@ -97,9 +106,9 @@ void updateDisplay(int percent, bool forceRedraw = false) {
       tft.fillRoundRect(13 + fillWidth, 53, 214 - fillWidth, 18, 4, TFT_BLACK);
     }
 
-    tft.fillRect(10, 85, 220, 20, TFT_BLACK);
+    tft.fillRect(10, 82, 130, 20, TFT_BLACK);
     tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.drawString("Brightness: " + String(percent) + "%", 10, 85, 2);
+    tft.drawString("Bri: " + String(percent) + "%", 10, 82, 2);
   }
 
   // 3. Scene Name
@@ -109,6 +118,15 @@ void updateDisplay(int percent, bool forceRedraw = false) {
     tft.fillRect(10, 105, 220, 25, TFT_BLACK);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.drawString("Scene: " + sceneName, 10, 110, 2);
+  }
+}
+
+void drawClockTime(const String& timeStr) {
+  if (timeStr != lastDrawnTime) {
+    lastDrawnTime = timeStr;
+    tft.fillRect(150, 82, 80, 20, TFT_BLACK);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.drawString(timeStr, 160, 82, 2);
   }
 }
 
@@ -153,7 +171,6 @@ void fetchRoomScenes() {
           totalScenes++;
         }
       }
-      Serial.printf("Total scenes found: %d\n", totalScenes);
     }
   }
   http.end();
@@ -169,28 +186,28 @@ void recallScene(const String& sceneId) {
 void setup() {
   Serial.begin(115200);
 
-  // Initialize Display
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString("Connecting Wi-Fi...", 10, 50, 4);
 
-  // Pin Modes
   pinMode(SWITCH_PIN, INPUT_PULLUP);
-  pinMode(BTN_NEXT_PIN, INPUT);        // GPIO 35 (hardware pull-up onboard)
-  pinMode(BTN_PREV_PIN, INPUT_PULLUP); // GPIO 0 (boot button, needs pull-up)
+  pinMode(BTN_NEXT_PIN, INPUT);
+  pinMode(BTN_PREV_PIN, INPUT_PULLUP);
 
   lastStableSwitchVal = digitalRead(SWITCH_PIN);
   isLightOn = (lastStableSwitchVal == LOW);
 
-  // Wi-Fi Connection
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
   Serial.println("\nWi-Fi connected!");
+
+  // Sync internal clock via NTP with Denmark daylight savings
+  configTzTime(tzInfo, ntpServer);
 
   fetchRoomScenes();
 
@@ -206,7 +223,42 @@ void loop() {
   unsigned long now = millis();
 
   // -------------------------------------------------------------
-  // 1. Toggle Switch
+  // 1. Clock Check & 06:30 Wake-Up Alarm Routine
+  // -------------------------------------------------------------
+  if (now - lastClockTick >= 1000) {
+    lastClockTick = now;
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      char timeBuffer[10];
+      strftime(timeBuffer, sizeof(timeBuffer), "%H:%M", &timeinfo);
+      drawClockTime(String(timeBuffer));
+
+      // Trigger 15-minute sunrise fade at 06:30 AM
+      if (timeinfo.tm_hour == 6 && timeinfo.tm_min == 30 && !wakeUpTriggeredToday) {
+        wakeUpTriggeredToday = true;
+        Serial.println("Wake-up routine triggered: Fading to 80% over 15 minutes");
+
+        // 80% brightness = 203 (out of 254)
+        // 15 minutes = 900 seconds = 9000 deciseconds
+        // First set to minimum brightness, then begin the 15-minute fade
+        sendHueCommand("{\"on\":true,\"bri\":1,\"transitiontime\":0}");
+        delay(100);
+        sendHueCommand("{\"on\":true,\"bri\":203,\"transitiontime\":9000}");
+
+        isLightOn = true;
+        lastSentBri = 203;
+        updateDisplay(80);
+      }
+
+      // Reset trigger flag at midnight
+      if (timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) {
+        wakeUpTriggeredToday = false;
+      }
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 2. Toggle Switch
   // -------------------------------------------------------------
   int reading = digitalRead(SWITCH_PIN);
   if (reading != lastReadSwitchVal) {
@@ -231,13 +283,13 @@ void loop() {
   }
 
   // -------------------------------------------------------------
-  // 2. Button 1: Next Scene (GPIO 35)
+  // 3. Scene Buttons (GPIO 35 = Next, GPIO 0 = Prev)
   // -------------------------------------------------------------
   int btnNextVal = digitalRead(BTN_NEXT_PIN);
   if (btnNextVal == LOW && lastBtnNextVal == HIGH && (now - lastBtnNextPress > 350)) {
     lastBtnNextPress = now;
     if (totalScenes > 0 && isLightOn) {
-      currentSceneIdx = (currentSceneIdx + 1) % totalScenes; // Forward
+      currentSceneIdx = (currentSceneIdx + 1) % totalScenes;
       recallScene(roomScenes[currentSceneIdx].id);
       int currentPercent = map(constrain(lastSentBri, 1, 254), 1, 254, 0, 100);
       updateDisplay(currentPercent);
@@ -245,14 +297,11 @@ void loop() {
   }
   lastBtnNextVal = btnNextVal;
 
-  // -------------------------------------------------------------
-  // 3. Button 2: Previous Scene (GPIO 0)
-  // -------------------------------------------------------------
   int btnPrevVal = digitalRead(BTN_PREV_PIN);
   if (btnPrevVal == LOW && lastBtnPrevVal == HIGH && (now - lastBtnPrevPress > 350)) {
     lastBtnPrevPress = now;
     if (totalScenes > 0 && isLightOn) {
-      currentSceneIdx = (currentSceneIdx - 1 + totalScenes) % totalScenes; // Backward
+      currentSceneIdx = (currentSceneIdx - 1 + totalScenes) % totalScenes;
       recallScene(roomScenes[currentSceneIdx].id);
       int currentPercent = map(constrain(lastSentBri, 1, 254), 1, 254, 0, 100);
       updateDisplay(currentPercent);
@@ -261,18 +310,16 @@ void loop() {
   lastBtnPrevVal = btnPrevVal;
 
   // -------------------------------------------------------------
-  // 4. Potentiometer Dimming & Snapping (3% -> 0%, 97% -> 100%)
+  // 4. Potentiometer Dimming & Snapping
   // -------------------------------------------------------------
   if (isLightOn) {
     float rawVolts = constrain(analogReadMilliVolts(POT_PIN) / 1000.0f, 0.15f, 3.15f);
     smoothedVolts = (EMA_ALPHA * rawVolts) + ((1.0f - EMA_ALPHA) * smoothedVolts);
 
-    // Compute raw 0-100%
     float rawPercent = ((smoothedVolts - 0.15f) / (3.15f - 0.15f)) * 100.0f;
     int displayPercent = 0;
     int targetBri = 0;
 
-    // Boundary snap thresholds
     if (rawPercent <= 3.0f) {
       displayPercent = 0;
       targetBri = 0;
@@ -284,7 +331,6 @@ void loop() {
       targetBri = map(displayPercent, 1, 100, 1, 254);
     }
 
-    // Send update on genuine change
     if (abs(targetBri - lastSentBri) >= BRI_DEADBAND && (now - lastSendTime >= SEND_INTERVAL_MS)) {
       lastSentBri = targetBri;
       lastSendTime = now;
