@@ -17,53 +17,52 @@ All output folders are emptied every time the program starts.
 OpenCV HSV ranges: H = 0-179, S = 0-255, V = 0-255
 """
 
-import cv2
-import numpy as np
-import glob
-import os
-import shutil
-from collections import deque
+import cv2 # Image processing library
+import numpy as np # Holds image data as arrays, which is good for working with the pixels
+import glob # Finds files like .JPG
+import os # Handles file paths and folders
+import shutil # Higher level file operations, for deleating whole folders
+from collections import deque # A queue like list used for the grassfire grouping
 
 # ----------------------------------------------------------------------
 # CONFIGURATION
 # ----------------------------------------------------------------------
 
+# Sets up all of the directions for where to look for pictues and where to leave them agian
 IMAGE_DIR = "Cropped and perspective corrected boards"
+ORIGINAL_DIR = os.path.join(IMAGE_DIR, "Original Pictures")
 BLURRED_DIR = os.path.join(IMAGE_DIR, "Blurred Pictures")
 TILE_DIR = os.path.join(IMAGE_DIR, "Tile HSV Values")
 CLASSIFIED_DIR = os.path.join(IMAGE_DIR, "Classified Tiles")
 GROUPED_DIR = os.path.join(IMAGE_DIR, "Grouped Tiles")
-IMAGE_PATTERN = os.path.join(IMAGE_DIR, "*.jpg")
+IMAGE_PATTERN = os.path.join(ORIGINAL_DIR, "*.jpg")
 
 KERNEL_SIZE = (5, 5)   # mean blur window
 TILE_SIZE = 100        # pixels per tile (width and height)
 GRID = 5               # 5 x 5 tiles
 BOARD_SIZE = TILE_SIZE * GRID  # 500
 
-# name: ((H_min, S_min, V_min), (H_max, S_max, V_max))  -- raw values from the tables
-TERRAIN_RANGES = {
-    "Wheat":     ((25,  115, 131), (26,  245, 195)),
-    "Forest":    ((32,  116, 49),  (46,  186, 64)),
-    "Lake":      ((103, 162, 105), (105, 247, 159)),
-    "Grassland": ((33,  146, 108), (44,  194, 158)),
-    "Swamp":     ((21,  60,  85),  (23,  147, 135)),
-    "Mine":      ((17,  118, 55),  (20,  166, 85)),
-    "Table":     ((19,  92,  128), (22,  203, 172)),
+# all of the HSV thresholds using HSV. A minimum HSV and Maximum HSV have been set
+# for the tiles
+THRESHOLDS = {
+    "Wheat":     ((22, 100, 116), (29, 255, 210)),
+    "Forest":    ((29, 101, 34),  (49, 201, 79)),
+    "Lake":      ((100, 147, 90), (108, 255, 174)),
+    "Grassland": ((30, 131, 93),  (47, 209, 173)),
+    "Swamp":     ((18, 45, 70),   (26, 162, 150)),
+    "Mine":      ((14, 103, 40),  (23, 181, 100)),
+    "Table":     ((16, 77, 113),  (25, 218, 187)),
+    "Y Crown":   ((26, 80, 55),   (36, 136, 161)),
+    "R Crown":   ((13, 39, 42),   (27, 157, 143)),
+    "G Crown":   ((28, 49, 33),   (43, 129, 127)),
+    "B Crown":   ((37, 6, 40),    (72, 48, 146)),
 }
 
-CROWN_RANGES = {
-    "Y Crown": ((29, 95, 70),  (33, 121, 146)),
-    "R Crown": ((16, 54, 57),  (24, 142, 128)),
-    "G Crown": ((31, 64, 48),  (40, 114, 112)),
-    "B Crown": ((40, 21, 55),  (69, 33,  131)),
-}
+# two lists of tile names
+TERRAIN_NAMES = ["Wheat", "Forest", "Lake", "Grassland", "Swamp", "Mine", "Table"]
+CROWN_NAMES = ["Y Crown", "R Crown", "G Crown", "B Crown"]
 
-BASE_RANGES = {**TERRAIN_RANGES, **CROWN_RANGES}
-
-# Tolerance added around each range, per channel (H, S, V)
-BUFFER = (3, 15, 15)
-
-# Outline color (B, G, R) per type in the grouped pictures
+# outline color (B, G, R) per type in the grouped pictures to make it look snazzy 💅
 GROUP_COLORS = {
     "Wheat":     (0, 255, 255),
     "Forest":    (0, 180, 0),
@@ -75,29 +74,15 @@ GROUP_COLORS = {
 }
 CROWN_COLOR = (255, 0, 255)
 
-# Neighbours that count as connected: up, down, left, right
+# Neighbours that count as connected: up, down, left, right. Because of (row,col)
 NEIGHBORS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-TINT_ALPHA = 0.20     # strength of the group color tint (0 = none)
-OUTLINE_INSET = 8     # pixels the outline is pulled inside the group
-BADGE_RADIUS = 18     # size of the count circle
+TINT_ALPHA = 0.20     # Alpha value for the tint/transparency
+OUTLINE_INSET = 3     # How far the outline is from the edge of the tile
+BADGE_RADIUS = 18     # Size of the count circle
 
-def build_thresholds(buffer):
-    """Widen every range by the buffer and clamp to the valid HSV range."""
-    max_vals = (179, 255, 255)
-    out = {}
-    for name, (lo, hi) in BASE_RANGES.items():
-        out[name] = (
-            tuple(max(0, lo[i] - buffer[i]) for i in range(3)),
-            tuple(min(max_vals[i], hi[i] + buffer[i]) for i in range(3)),
-        )
-    return out
-
-
-THRESHOLDS = build_thresholds(BUFFER)
-
-
-def is_crown(name):
-    return name in CROWN_RANGES
+# to check if a tile is a crown tile, because we have more than one type of crown tile, returns true or false
+def is_crown(name): 
+    return name in CROWN_NAMES
 
 
 # ----------------------------------------------------------------------
@@ -198,14 +183,13 @@ def annotate_tiles(img):
 def score_against(hsv, name):
     """
     Distance from the mean HSV to the center of one type's range.
-    Every channel is divided by the half-width of the buffered range, so
+    Every channel is divided by the half-width of the range, so
     H, S and V count equally. Lower = closer.
     """
     lo, hi = THRESHOLDS[name]
-    blo, bhi = BASE_RANGES[name]
     score = 0.0
     for i in range(3):
-        center = (blo[i] + bhi[i]) / 2
+        center = (lo[i] + hi[i]) / 2
         half = max((hi[i] - lo[i]) / 2, 1)
         score += ((hsv[i] - center) / half) ** 2
     return score ** 0.5
@@ -241,8 +225,8 @@ def enforce_single_crown(results, values, image_name):
     - 2 or more: only the tile with the lowest margin stays a crown tile,
       the others go back to their closest terrain type.
     """
-    terrain = list(TERRAIN_RANGES)
-    crowns = list(CROWN_RANGES)
+    terrain = TERRAIN_NAMES
+    crowns = CROWN_NAMES
 
     best_terrain = {pos: classify_tile(hsv, allowed=terrain) for pos, hsv in values.items()}
     best_crown = {pos: classify_tile(hsv, allowed=crowns) for pos, hsv in values.items()}
