@@ -9,7 +9,7 @@ MFRC522 rfid(SS_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
 
 // Target UID to clone
-const byte newUid[4] = {0xEB, 0x42, 0x40, 0x43};
+const byte newUid[4] = {_x__, _x__, _x__, _x__};
 
 void setup() {
   Serial.begin(115200);

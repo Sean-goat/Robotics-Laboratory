@@ -6,11 +6,11 @@
 #include <time.h>
 
 // === Wi-Fi Credentials ===
-const char* ssid     = "ICO-3CDEDB";
-const char* password = "avvufutKarj7";
+const char* ssid     = "Nuh uhh";
+const char* password = "Nuh uhh";
 
 // === Philips Hue Bridge Settings ===
-const char* hueBridgeIP = "192.168.0.161";
+const char* hueBridgeIP = "xxx.xxx.x.xxx";
 const char* hueUsername = "vPADFQtPb5GarFNcyjuReSGZNFJLG-y3f88PS0BQ";
 const int groupId       = 5; // "Sean værelse"
 
