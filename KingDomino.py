@@ -78,7 +78,7 @@ CROWN_COLOR = (255, 0, 255)
 NEIGHBORS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 TINT_ALPHA = 0.20     # Alpha value for the tint/transparency
 OUTLINE_INSET = 3     # How far the outline is from the edge of the tile
-BADGE_RADIUS = 18     # Size of the count circle
+BADGE_RADIUS = 18     # Size of the tile count circle
 
 # to check if a tile is a crown tile, because we have more than one type of crown tile, returns true or false
 def is_crown(name): 
@@ -89,16 +89,17 @@ def is_crown(name):
 # FOLDER HANDLING
 # ----------------------------------------------------------------------
 
+
 def prepare_folder(folder):
-    """Create the folder if missing, and delete everything inside it."""
-    os.makedirs(folder, exist_ok=True)
-    for name in os.listdir(folder):
-        path = os.path.join(folder, name)
-        if os.path.isfile(path) or os.path.islink(path):
-            os.remove(path)
-        elif os.path.isdir(path):
-            shutil.rmtree(path)
-    print(f"[INFO] Cleared folder: {folder}")
+    """Create the folder if missing, and delete everything inside it for good 😈"""
+    os.makedirs(folder, exist_ok=True)                      # Creates the folder, if the folder already exists, then there is no error
+    for name in os.listdir(folder):                         # Gets the names of everything (items) inside the folder and uses a for loop to loop over them
+        path = os.path.join(folder, name)                   # Gets the full path to the current item so it knows exatly what to delete
+        if os.path.isfile(path) or os.path.islink(path):    # Checks if the item is a normal file or a shortcut
+            os.remove(path)                                 # Deletes that file or link ;)
+        elif os.path.isdir(path):                           # if else it checks whether the item is a subfolder
+            shutil.rmtree(path)                             # Deletes the subfolder and everything inside it
+    print(f"[INFO] Cleared folder: {folder}")               # Prints a message to see which folder was cleared   
 
 
 # ----------------------------------------------------------------------
