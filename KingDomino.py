@@ -17,12 +17,12 @@ All output folders are emptied every time the program starts.
 OpenCV HSV ranges: H = 0-179, S = 0-255, V = 0-255
 """
 
-import cv2 # Image processing library
-import numpy as np # Holds image data as arrays, which is good for working with the pixels
-import glob # Finds files like .JPG
-import os # Handles file paths and folders
-import shutil # Higher level file operations, for deleating whole folders
-from collections import deque # A queue like list used for the grassfire grouping
+import cv2                          # Image processing library
+import numpy as np                  # Holds image data as arrays, which is good for working with the pixels
+import glob                         # Finds files like .JPG
+import os                           # Handles file paths and folders
+import shutil                       # Higher level file operations, for deleating whole folders
+from collections import deque       # A queue like list used for the grassfire grouping
 
 # ----------------------------------------------------------------------
 # CONFIGURATION
@@ -106,11 +106,11 @@ def prepare_folder(folder):
 # BLURRING
 # ----------------------------------------------------------------------
 
-def mean_blur_image(image_path, kernel_size=KERNEL_SIZE):
-    img = cv2.imread(image_path)
-    if img is None:
-        raise FileNotFoundError(f"Could not read image: {image_path}")
-    return cv2.blur(img, kernel_size)
+def mean_blur_image(image_path, kernel_size):                               # Takes an image path and a kernal size to blur a picture
+    img = cv2.imread(image_path)                                            # Reads the picture in an array of pixels in B, G, R order
+    if img is None:                                                         # Checks whether the loading failed
+        raise FileNotFoundError(f"Could not read image: {image_path}")      # Stops the program with an error message
+    return cv2.blur(img, kernel_size)                                       # Returns the blured picture with openCV, from a given kernel size
 
 
 # ----------------------------------------------------------------------
@@ -384,12 +384,12 @@ def main():
 
     files = sorted(glob.glob(IMAGE_PATTERN))
     if not files:
-        print(f"[WARN] No .jpg images found in '{IMAGE_DIR}'")
+        print(f"[WARN] No .jpg images found in '{ORIGINAL_DIR}'")
         return
 
     # Step 1: blur
     for f in files:
-        blurred = mean_blur_image(f)
+        blurred = mean_blur_image(f, KERNEL_SIZE)
         cv2.imwrite(os.path.join(BLURRED_DIR, os.path.basename(f)), blurred)
         print(f"[BLUR] {os.path.basename(f)}")
 
