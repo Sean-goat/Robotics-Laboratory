@@ -117,35 +117,19 @@ def mean_blur_image(image_path, kernel_size):                               # Ta
 # TILE HSV VALUES
 # ----------------------------------------------------------------------
 
-def fix_size(img):
-    """Make sure the image is exactly 500x500."""
-    if img.shape[0] != BOARD_SIZE or img.shape[1] != BOARD_SIZE:
-        print(f"[WARN] Image is {img.shape[1]}x{img.shape[0]}, "
-              f"resizing to {BOARD_SIZE}x{BOARD_SIZE}")
-        img = cv2.resize(img, (BOARD_SIZE, BOARD_SIZE))
-    return img
-
-
 def get_tile_bgr(img, row, col):
     """Return the mean (B, G, R) of the 100x100 tile at (row, col)."""
-    y1, x1 = row * TILE_SIZE, col * TILE_SIZE
-    tile = img[y1:y1 + TILE_SIZE, x1:x1 + TILE_SIZE]
-    b, g, r = tile.reshape(-1, 3).mean(axis=0)
-    return int(round(b)), int(round(g)), int(round(r))
+    y1, x1 = row * TILE_SIZE, col * TILE_SIZE               # Finds the top left pixel of a tile
+    tile = img[y1:y1 + TILE_SIZE, x1:x1 + TILE_SIZE]        # separats the image in to a 3d NumPy array, with 100 rows, 100 columns, and 3 color values per pixel
+    b, g, r = tile.reshape(-1, 3).mean(axis=0)              # Turns the 3D array into a 2D list of 10,000 pixels (B, G, R), then averages each color channel over all pixels
+    return int(round(b)), int(round(g)), int(round(r))      # Rounds each value to the nearest whole number and converts it to a Python integer
 
 
 def bgr_to_hsv(bgr):
     """Convert one (B, G, R) color to OpenCV (H, S, V)."""
-    pixel = np.uint8([[list(bgr)]])
-    h, s, v = cv2.cvtColor(pixel, cv2.COLOR_BGR2HSV)[0][0]
-    return int(h), int(s), int(v)
-
-
-def put_text_outlined(img, text, org, scale=0.4):
-    """White text with a black outline, the same everywhere."""
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(img, text, org, font, scale, (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.putText(img, text, org, font, scale, (255, 255, 255), 1, cv2.LINE_AA)
+    pixel = np.uint8([[list(bgr)]])                             # Wraps the color in a 1x1 "image" (shape 1, 1, 3) of unsigned 8 bit integers, because cvtColor only accepts images
+    h, s, v = cv2.cvtColor(pixel, cv2.COLOR_BGR2HSV)[0][0]      # Converts the 1x1 image to HSV, [0][0] picks out the single pixel (row and column), and h, s, v receive its three values
+    return int(h), int(s), int(v)                               # Turns the NumPy numbers into normal Python integers
 
 
 def annotate_tiles(img):
@@ -154,27 +138,29 @@ def annotate_tiles(img):
     draw the yellow grid, and write the mean H, S, V on the tile.
     Returns the mosaic image and a dict {(row, col): (H, S, V)}.
     """
-    img = fix_size(img)
-    vis = np.zeros_like(img)
-    values = {}
+    vis = np.zeros_like(img)            # Makes a black picture with the same size and type as the input
+    values = {}                         # An empty dictionary that will later hold the 25 HSV values
+    font = cv2.FONT_HERSHEY_SIMPLEX     # Sets the font
+    
+    for row in range(GRID):                         # Go through all 5 × 5 = 25 tiles
+        for col in range(GRID):                     # Go through all 5 × 5 = 25 tiles
+            bgr = get_tile_bgr(img, row, col)       # Gives the tile's average color as (B, G, R)
+            h, s, v = bgr_to_hsv(bgr)               # Uses the function to convert to HSV
+            values[(row, col)] = (h, s, v)          # saves the HSV under the sile position
 
-    for row in range(GRID):
-        for col in range(GRID):
-            bgr = get_tile_bgr(img, row, col)
-            h, s, v = bgr_to_hsv(bgr)
-            values[(row, col)] = (h, s, v)
-
-            x1, y1 = col * TILE_SIZE, row * TILE_SIZE
+            # To find the tile location in the 500 x 500 image
+            x1, y1 = col * TILE_SIZE, row * TILE_SIZE 
             x2, y2 = x1 + TILE_SIZE, y1 + TILE_SIZE
 
-            vis[y1:y2, x1:x2] = bgr
-            cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 255), 1)
+            # Colors the whole tile area in its mean color
+            vis[y1:y2, x1:x2] = bgr 
 
-            put_text_outlined(vis, f"H:{h}", (x1 + 6, y1 + 35))
-            put_text_outlined(vis, f"S:{s}", (x1 + 6, y1 + 55))
-            put_text_outlined(vis, f"V:{v}", (x1 + 6, y1 + 75))
+            # Maybe this put the H, S, V values on the image, not sure though 🤔
+            cv2.putText(vis, f"H:{h}", (x1 + 6, y1 + 35), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(vis, f"S:{s}", (x1 + 6, y1 + 55), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(vis, f"V:{v}", (x1 + 6, y1 + 75), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
 
-    return vis, values
+    return vis, values # Returns the picture and the dictionary
 
 
 # ----------------------------------------------------------------------
@@ -252,12 +238,12 @@ def put_label_centered(img, text, x1, y1):
     scale = 0.45
     (w, h), _ = cv2.getTextSize(text, font, scale, 1)
     org = (x1 + (TILE_SIZE - w) // 2, y1 + (TILE_SIZE + h) // 2)
-    put_text_outlined(img, text, org, scale)
+    cv2.putText(img, text, org, font, scale, (255, 255, 255), 1, cv2.LINE_AA)
 
 
 def draw_classification(original, results):
     """Write the tile names on a copy of the original picture."""
-    vis = fix_size(original).copy()
+    vis = original.copy()
     for (row, col), (name, _) in results.items():
         put_label_centered(vis, name, col * TILE_SIZE, row * TILE_SIZE)
     return vis
@@ -334,7 +320,7 @@ def draw_groups(original, groups):
     Light color tint per group, a thin outline inside the group, and a small
     circle badge with the number of tiles.
     """
-    base = fix_size(original)
+    base = original
 
     # Pass 1: tint every group in its type color
     tint = base.copy()
