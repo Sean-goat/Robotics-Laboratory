@@ -206,7 +206,7 @@ def classify_all(values):                                                   # Th
     """Classify all 25 tiles. Returns {(row, col): (name, score)}."""
     return {pos: classify_tile(hsv) for pos, hsv in values.items()}         # Returns a dictionary with (name, score) pairs, as well as the location on the board
 
-
+# enforce_single_crown have been made with AI
 def enforce_single_crown(results, values, image_name):
     """
     Guarantee exactly one crown tile per picture.
@@ -218,41 +218,41 @@ def enforce_single_crown(results, values, image_name):
     - 2 or more: only the tile with the lowest margin stays a crown tile,
       the others go back to their closest terrain type.
     """
+
+    # Two lists of allowed names, the ones getting passed to classify_all
     terrain = TERRAIN_NAMES
     crowns = CROWN_NAMES
 
-    best_terrain = {pos: classify_tile(hsv, allowed=terrain) for pos, hsv in values.items()}
-    best_crown = {pos: classify_tile(hsv, allowed=crowns) for pos, hsv in values.items()}
-    margin = {pos: best_crown[pos][1] - best_terrain[pos][1] for pos in values}
+    best_terrain = {pos: classify_tile(hsv, allowed=terrain) for pos, hsv in values.items()}        # Closest terrain type and its score for every tile
+    best_crown = {pos: classify_tile(hsv, allowed=crowns) for pos, hsv in values.items()}           # Same for the closest crown type
+    margin = {pos: best_crown[pos][1] - best_terrain[pos][1] for pos in values}                     # Best crown score minus best terrain score for every tile. A low margin means the tile looks like a crown
 
-    winner = min(margin, key=margin.get)
+    winner = min(margin, key=margin.get)        # Finds the position with the lowest margin. min goes over the dictionary's keys and key=margin.get compares them by their margin values
 
-    current = [pos for pos, (name, _) in results.items() if is_crown(name)]
-    if current != [winner]:
-        print(f"[CHECK] {image_name}: found {len(current)} crown tiles, "
-              f"forced to one at tile {winner}")
-
-    for pos in values:
+    # The winner gets its best crown type, every other tile its best terrain type. This replaces the first pass, so there is always exactly one crown
+    for pos in values:                                                          
         results[pos] = best_crown[pos] if pos == winner else best_terrain[pos]
 
-    return results
+    return results      # Returns the dictionary with the label and score of all 25 tiles
 
 
 def put_label_centered(img, text, x1, y1):
     """Write text centered on the tile whose top-left corner is (x1, y1)."""
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.45
-    (w, h), _ = cv2.getTextSize(text, font, scale, 1)
-    org = (x1 + (TILE_SIZE - w) // 2, y1 + (TILE_SIZE + h) // 2)
-    cv2.putText(img, text, org, font, scale, (255, 255, 255), 1, cv2.LINE_AA)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX         # Set the font
+    scale = 0.5                            # Set the text scale
+
+    (w, h), _ = cv2.getTextSize(text, font, scale, 1)                               # Measures the text before drawing it. It returns the width w and height h in pixels. The _ ignores that baseline, and the 1 is the thickness.
+    org = (x1 + (TILE_SIZE - w) // 2, y1 + (TILE_SIZE + h) // 2)                    # This is the point where the text starts. Horizontaly and verticaly
+    cv2.putText(img, text, org, font, scale, (255, 255, 255), 1, cv2.LINE_AA)       # Draws the text at org in white (255, 255, 255), with thickness 1 and smooth edges (cv2.LINE_AA)
 
 
 def draw_classification(original, results):
     """Write the tile names on a copy of the original picture."""
-    vis = original.copy()
-    for (row, col), (name, _) in results.items():
-        put_label_centered(vis, name, col * TILE_SIZE, row * TILE_SIZE)
-    return vis
+    vis = original.copy()                                                       # Makes a separate copy of the picture
+    for (row, col), (name, _) in results.items():                               # loops over the results dictionary. The result looks like (row, col), (name, _)
+        put_label_centered(vis, name, col * TILE_SIZE, row * TILE_SIZE)         # Writes the name in the middle of the tile. Note the order x1 comes from the column and y1 from the row
+    return vis                                                                  # Retuns the finished picture with tile names
 
 
 # ----------------------------------------------------------------------
