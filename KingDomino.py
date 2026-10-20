@@ -172,33 +172,39 @@ def score_against(hsv, name):
     Distance from the mean HSV to the center of one type's range.
     Every channel is divided by the half-width of the range, so
     H, S and V count equally. Lower = closer.
+
+    This is the related idea to kNN
     """
-    lo, hi = THRESHOLDS[name]
-    score = 0.0
-    for i in range(3):
-        center = (lo[i] + hi[i]) / 2
-        half = max((hi[i] - lo[i]) / 2, 1)
-        score += ((hsv[i] - center) / half) ** 2
-    return score ** 0.5
+    lo, hi = THRESHOLDS[name]                           # Looks up the minimum and maximum HSV for a tile type
+    score = 0.0                                         # Makes the variabel for the calculations
+    for i in range(3):                                  # A loop to loop through all 3 HSV channels
+        center = (lo[i] + hi[i]) / 2                    # Finds the avrage of the HSV for a type threshold
+        half = max((hi[i] - lo[i]) / 2, 1)              # It finds half the width. max then picks the larger of that and 1, so it never becomes 0
+        score += ((hsv[i] - center) / half) ** 2        # Tells how far a H, S or V value is from the middle of the range. Then this distance is squred and all of the channels are added up
+    return score ** 0.5                                 # Takes the square root of the sum and returns that
 
 
 def classify_tile(hsv, allowed=None):
     """
     Return (name, score) of the closest type. If 'allowed' is given, only
     those types are considered.
+
+    This is a very simplified version of Gaussian naive Bayes 
+    with lowest number getting classifyed.
+    No probability is used here.
     """
-    names = allowed if allowed is not None else list(THRESHOLDS)
-    best_name, best_score = None, float("inf")
-    for name in names:
-        s = score_against(hsv, name)
-        if s < best_score:
-            best_name, best_score = name, s
-    return best_name, best_score
+    names = allowed if allowed is not None else list(THRESHOLDS)        # Types to check: only the given list, or all types if none is given
+    best_name, best_score = None, float("inf")                          # Sets the starting "best so far"
+    for name in names:                                                  # Loops over the sent types
+        s = score_against(hsv, name)                                    # Calculates the distance from the tile to that type
+        if s < best_score:                                              # Checks whether this type is closer than the best one so far
+            best_name, best_score = name, s                             # If so then replace the best with this one
+    return best_name, best_score                                        # Returns the closest type and its score
 
 
-def classify_all(values):
+def classify_all(values):                                                   # The first time classify_tile get called here all of the tiles gets classified. They can be any type including crown types
     """Classify all 25 tiles. Returns {(row, col): (name, score)}."""
-    return {pos: classify_tile(hsv) for pos, hsv in values.items()}
+    return {pos: classify_tile(hsv) for pos, hsv in values.items()}         # Returns a dictionary with (name, score) pairs, as well as the location on the board
 
 
 def enforce_single_crown(results, values, image_name):
