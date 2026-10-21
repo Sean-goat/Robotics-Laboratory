@@ -206,7 +206,7 @@ def classify_all(values):                                                   # Th
     """Classify all 25 tiles. Returns {(row, col): (name, score)}."""
     return {pos: classify_tile(hsv) for pos, hsv in values.items()}         # Returns a dictionary with (name, score) pairs, as well as the location on the board
 
-# enforce_single_crown have been made with AI
+# enforce_single_crown have been made by AI
 def enforce_single_crown(results, values, image_name):
     """
     Guarantee exactly one crown tile per picture.
@@ -259,37 +259,37 @@ def draw_classification(original, results):
 # GRASSFIRE GROUPING
 # ----------------------------------------------------------------------
 
-def ignite_fire(types, ids, start, group_id):
+def ignite_fire(types, ids, start, group_id):       # types: dictionary with the type name of each tile position. ids: dictionary with the group number per tile (0 = not burned yet). start: position where the fire starts. group_id: the number of this group
     """
     Burn the group that the start tile belongs to.
     Every connected tile (up/down/left/right) of the SAME type gets
     group_id in 'ids'. Returns the list of tiles that were burned.
     """
-    start_type = types[start]
-    burn_queue = deque()
-    members = []
+    start_type = types[start]       # saves the type of the tile type, so only the same type gets burned
+    burn_queue = deque()            # The list of tiles waiting to be burned
+    members = []                    # Saves tiles that have been burned
 
     # Only ignite if the start tile has not been burned yet
-    if ids[start] == 0:
-        burn_queue.append(start)
+    if ids[start] == 0:                 # If a tile have 0 id
+        burn_queue.append(start)        # Then the fire needs to start there
 
-    while len(burn_queue) > 0:
-        current_pos = burn_queue.pop()
-        if ids[current_pos] != 0:
-            continue
+    while len(burn_queue) > 0:              # Loops until there are no more tiles waiting in queue
+        current_pos = burn_queue.pop()      # Takes a tile from the queue
+        if ids[current_pos] != 0:           # skips the tile if it was burned previus
+            continue                        # skips like a stone
 
         # Burn current_pos with the current id
-        ids[current_pos] = group_id
-        members.append(current_pos)
+        ids[current_pos] = group_id         # Burns a tile. Giving it an id
+        members.append(current_pos)         # Adds it to the group list
 
         # Add connections to burn_queue
-        r, c = current_pos
-        for dr, dc in NEIGHBORS:
-            nxt = (r + dr, c + dc)
-            if nxt in types and ids[nxt] == 0 and types[nxt] == start_type:
-                burn_queue.append(nxt)
+        r, c = current_pos                                                          # This splits it into rows and columns
+        for dr, dc in NEIGHBORS:                                                    # Loops over all of the directions in where to look for neighbors
+            nxt = (r + dr, c + dc)                                                  # This adds the step to the current position, so the neighbors
+            if nxt in types and ids[nxt] == 0 and types[nxt] == start_type:         # First it checks if it is a position on the board. Then it checks if it have been burned. Then it checks if it have been burned 
+                burn_queue.append(nxt)                                              # The neighbour gets sent to the queue
 
-    return members
+    return members      # Returns the list of its tiles, that is in the menbers that have been burned
 
 
 def find_groups(results):
@@ -297,71 +297,73 @@ def find_groups(results):
     Loop over all tiles and ignite a fire on every tile that has not been
     burned yet. Returns {group_id: (type_name, [tiles])}.
     """
-    types = {pos: name for pos, (name, _) in results.items()}
-    ids = {pos: 0 for pos in types}   # 0 = not burned
-    groups = {}
-    next_id = 1
+    types = {pos: name for pos, (name, _) in results.items()}       # Makes the types dictionary that ignite_fire needs, results has (name, score) pairs
+    ids = {pos: 0 for pos in types}                                 # Gives every tile the group number 0
+    groups = {}                                                     # Will hold the finished groups
+    next_id = 1                                                     # The number for the next group
 
-    for row in range(GRID):
-        for col in range(GRID):
-            pos = (row, col)
-            if ids[pos] == 0:
-                members = ignite_fire(types, ids, pos, next_id)
-                groups[next_id] = (types[pos], members)
-                next_id += 1
+    for row in range(GRID):                                             # goes through all 25 tiles
+        for col in range(GRID):                                         # goes through all 25 tiles
+            pos = (row, col)                                            # gets the position
+            if ids[pos] == 0:                                           # checks if the tile is unburned
+                members = ignite_fire(types, ids, pos, next_id)         # Burns the group around this tile
+                groups[next_id] = (types[pos], members)                 # Saves the group under its number, with its type name and its tiles
+                next_id += 1                                            # Increment the counter
 
-    return groups
+    return groups       # Returns a dictionary with grupe type and locations
 
 
-def put_text_centered(img, text, cx, cy, scale, color=(0, 0, 0), thickness=2):
+def put_text_centered(img, text, cx, cy, scale, color=(0, 0, 0), thickness=2):      # It gets img: picture to write on. text: is a string. cx and cy is the center pixel where the text is written. scale is the font size. color: is set to black. thickness: is the line thickness
     """Plain text centered on pixel (cx, cy)."""
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    (w, h), _ = cv2.getTextSize(text, font, scale, thickness)
-    org = (int(cx - w / 2), int(cy + h / 2))
-    cv2.putText(img, text, org, font, scale, color, thickness, cv2.LINE_AA)
+    font = cv2.FONT_HERSHEY_SIMPLEX                                                 # The font, I think maybe
+    (w, h), _ = cv2.getTextSize(text, font, scale, thickness)                       # Measures the width w and height h of the text
+    org = (int(cx - w / 2), int(cy + h / 2))                                        # Is the start point of the text
+    cv2.putText(img, text, org, font, scale, color, thickness, cv2.LINE_AA)         # Draws the text at org
 
-
+# draw_groups have been made by AI
 def draw_groups(original, groups):
     """
     Light color tint per group, a thin outline inside the group, and a small
     circle badge with the number of tiles.
     """
-    base = original
+    
+    base = original         # This is the picture everything is drawn on
 
     # Pass 1: tint every group in its type color
-    tint = base.copy()
-    prepared = []
-    for group_id, (name, members) in groups.items():
-        mask = np.zeros((BOARD_SIZE, BOARD_SIZE), np.uint8)
-        for (r, c) in members:
+    tint = base.copy()      # This makes a separate copy of the original picture
+    prepared = []           # This is an empty list. During the loop, each group adds one tuple to it
+    
+    for group_id, (name, members) in groups.items():                #  It loops over each group: its number, type name and tiles
+        mask = np.zeros((BOARD_SIZE, BOARD_SIZE), np.uint8)         # Makes a black 500×500 picture with one channel
+        
+        for (r, c) in members:                                      # loop sets the 100×100 area of each tile in the group to 255 (white)
             mask[r * TILE_SIZE:(r + 1) * TILE_SIZE,
                  c * TILE_SIZE:(c + 1) * TILE_SIZE] = 255
-        color = CROWN_COLOR if is_crown(name) else GROUP_COLORS.get(name, (255, 255, 255))
-        tint[mask > 0] = color
-        prepared.append((members, mask, color))
+        color = CROWN_COLOR if is_crown(name) else GROUP_COLORS.get(name, (255, 255, 255))      # Picks the group color. Crowns get the magenta CROWN_COLOR. Other types get their color from GROUP_COLORS
+        tint[mask > 0] = color                                                                  # Paints every pixel where the mask is white in that color
+        prepared.append((members, mask, color))                                                 # Saves the three things for pass 2
 
-    vis = cv2.addWeighted(tint, TINT_ALPHA, base, 1 - TINT_ALPHA, 0)
+    vis = cv2.addWeighted(tint, TINT_ALPHA, base, 1 - TINT_ALPHA, 0)        # Blends the two pictures: 20% of the fully colored tint plus 80% of the original photo
 
     # Pass 2: outlines and badges on top
-    kernel = np.ones((2 * OUTLINE_INSET + 1, 2 * OUTLINE_INSET + 1), np.uint8)
-    for members, mask, color in prepared:
-        inset = cv2.erode(mask, kernel)
-        contours, _ = cv2.findContours(inset, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(vis, contours, -1, (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.drawContours(vis, contours, -1, color, 2, cv2.LINE_AA)
+    kernel = np.ones((2 * OUTLINE_INSET + 1, 2 * OUTLINE_INSET + 1), np.uint8)              # Makes a 7×7 block of ones
+    for members, mask, color in prepared:                                                   # It goes through the saved list of groups
+        inset = cv2.erode(mask, kernel)                                                     # Shrinks the white area by 3 pixels on every side
+        contours, _ = cv2.findContours(inset, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)      # Finds the outline of the white shape
+        cv2.drawContours(vis, contours, -1, color, 2, cv2.LINE_AA)                          # Draws the outline of a group
 
         # Badge on the tile of the group closest to the group's center
-        cr = sum(r for r, _ in members) / len(members)
-        cc = sum(c for _, c in members) / len(members)
-        r, c = min(members, key=lambda m: (m[0] - cr) ** 2 + (m[1] - cc) ** 2)
-        cx = c * TILE_SIZE + TILE_SIZE // 2
-        cy = r * TILE_SIZE + TILE_SIZE // 2
+        cr = sum(r for r, _ in members) / len(members)                              # average row to get the center
+        cc = sum(c for _, c in members) / len(members)                              # average column to get the center
+        r, c = min(members, key=lambda m: (m[0] - cr) ** 2 + (m[1] - cc) ** 2)      # Picks the member tile closest to that center, by squared distance
+        cx = c * TILE_SIZE + TILE_SIZE // 2                                         # Are the pixels x koordinate for the center of that tile
+        cy = r * TILE_SIZE + TILE_SIZE // 2                                         # Are the pixels y koordinate for the center of that tile
 
-        cv2.circle(vis, (cx, cy), BADGE_RADIUS, color, -1, cv2.LINE_AA)
-        cv2.circle(vis, (cx, cy), BADGE_RADIUS, (0, 0, 0), 2, cv2.LINE_AA)
-        put_text_centered(vis, str(len(members)), cx, cy, 0.6)
+        cv2.circle(vis, (cx, cy), BADGE_RADIUS, color, -1, cv2.LINE_AA)         # Draw a filled circle in the group color
+        cv2.circle(vis, (cx, cy), BADGE_RADIUS, (0, 0, 0), 1, cv2.LINE_AA)      # Adds a black edge
+        put_text_centered(vis, str(len(members)), cx, cy, 0.6)                  # Writes the number of tiles in black, centered on the circle
 
-    return vis
+    return vis      # Returns the bleded picture
 
 
 # ----------------------------------------------------------------------
