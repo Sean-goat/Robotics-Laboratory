@@ -379,47 +379,47 @@ def main():
     prepare_folder(CLASSIFIED_DIR)
     prepare_folder(GROUPED_DIR)
 
-    files = sorted(glob.glob(IMAGE_PATTERN)) # Finds and sorts .jpg in the original picture folder 
+    files = sorted(glob.glob(IMAGE_PATTERN))        # Finds and sorts .jpg in the original picture folder 
 
     # Step 1: blur
-    for f in files: # Goes through the list of pictures
-        blurred = mean_blur_image(f, KERNEL_SIZE) # Calls the function to blur pictuers and saves them in blurred
-        cv2.imwrite(os.path.join(BLURRED_DIR, os.path.basename(f)), blurred) # Saves the blurred pictures in the blurred pictuers folder
-        print(f"[BLUR] {os.path.basename(f)}") # Prints the progress in the terminal
+    for f in files:                                                                 # Goes through the list of pictures
+        blurred = mean_blur_image(f, KERNEL_SIZE)                                   # Calls the function to blur pictuers and saves them in blurred
+        cv2.imwrite(os.path.join(BLURRED_DIR, os.path.basename(f)), blurred)        # Saves the blurred pictures in the blurred pictuers folder
+        print(f"[BLUR] {os.path.basename(f)}")                                      # Prints the progress in the terminal
 
-    # Step 2 + 3 + 4
-    for f in files:
-        name = os.path.basename(f)
-        blurred = cv2.imread(os.path.join(BLURRED_DIR, name))
-        original = cv2.imread(f)
-        if blurred is None or original is None:
-            print(f"[SKIP] Could not read {name}")
-            continue
+    
+    for f in files:                                                 # Goes through the list of pictures to load them
+        name = os.path.basename(f)                                  # Takes only the file name from a full file path and stores it in name
+        blurred = cv2.imread(os.path.join(BLURRED_DIR, name))       # Reads the blurred copy from the blurred folder
+        original = cv2.imread(f)                                    # Reads the original picture
 
-        mosaic, values = annotate_tiles(blurred)
-        cv2.imwrite(os.path.join(TILE_DIR, name), mosaic)
+        # Step 2: Measuer the tiles
+        mosaic, values = annotate_tiles(blurred)                # mosaic = picture showing the tile values, values = HSV value of each tile by position
+        cv2.imwrite(os.path.join(TILE_DIR, name), mosaic)       # Then saves it
 
-        results = classify_all(values)
-        results = enforce_single_crown(results, values, name)
+        # Step 3: Classify 
+        results = classify_all(values)                              # Decides the type of each tile from its HSV values
+        results = enforce_single_crown(results, values, name)       # Makes it so that only one tile is labeled crown
 
-        classified = draw_classification(original, results)
-        cv2.imwrite(os.path.join(CLASSIFIED_DIR, name), classified)
+        classified = draw_classification(original, results)                 # Draws the labels on the original picture 
+        cv2.imwrite(os.path.join(CLASSIFIED_DIR, name), classified)         # Then saves it
 
-        groups = find_groups(results)
-        grouped = draw_groups(original, groups)
-        cv2.imwrite(os.path.join(GROUPED_DIR, name), grouped)
+        # Step 4: Group
+        groups = find_groups(results)                               # Groups neighboring tiles of the same type
+        grouped = draw_groups(original, groups)                     # Draws the tints, outlines and number badges
+        cv2.imwrite(os.path.join(GROUPED_DIR, name), grouped)       # Then saves it
 
-        print(f"\n{name}")
-        for (row, col), (h, s, v) in values.items():
-            label, score = results[(row, col)]
+        print(f"\n{name}") # Prints a file name
+        for (row, col), (h, s, v) in values.items():                        # Takes an entry and saves it into their own variable 
+            label, score = results[(row, col)]                              # It saves the label and score from each tile 
             print(f"  tile ({row},{col}): H={h:3d} S={s:3d} V={v:3d}  "
-                  f"-> {label} (score {score:.2f})")
-        print(f"  Groups ({len(groups)}):")
-        for gid, (gname, members) in groups.items():
-            print(f"    #{gid} {gname}: {len(members)} tile(s)")
+                  f"-> {label} (score {score:.2f})")                        # Prints the location. Then H, S and V values. Then the type of tile. Then how close it is to beeing that tile (score)
+        print(f"  Groups ({len(groups)}):")                                 # Prints how many groups were found
+        for gid, (gname, members) in groups.items():                        # The loop unpacks each group
+            print(f"    #{gid} {gname}: {len(members)} tile(s)")            # Prints the group id then what type it is and how many tiles there are in it.
 
-    print(f"\nDone. Grouped images saved in '{GROUPED_DIR}'")
+    print(f"\nDone. Grouped images saved in '{GROUPED_DIR}'")       # It prints once when all pictures are finished
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__":      # True only when the file is run directly
+    main()                      # Runs the program
