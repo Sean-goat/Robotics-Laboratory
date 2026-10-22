@@ -370,22 +370,22 @@ def draw_groups(original, groups):
 # MAIN
 # ----------------------------------------------------------------------
 
+# main is the is the function that runs the entire program
 def main():
+
+    # Create the folder if missing, and delete everything inside
     prepare_folder(BLURRED_DIR)
     prepare_folder(TILE_DIR)
     prepare_folder(CLASSIFIED_DIR)
     prepare_folder(GROUPED_DIR)
 
-    files = sorted(glob.glob(IMAGE_PATTERN))
-    if not files:
-        print(f"[WARN] No .jpg images found in '{ORIGINAL_DIR}'")
-        return
+    files = sorted(glob.glob(IMAGE_PATTERN)) # Finds and sorts .jpg in the original picture folder 
 
     # Step 1: blur
-    for f in files:
-        blurred = mean_blur_image(f, KERNEL_SIZE)
-        cv2.imwrite(os.path.join(BLURRED_DIR, os.path.basename(f)), blurred)
-        print(f"[BLUR] {os.path.basename(f)}")
+    for f in files: # Goes through the list of pictures
+        blurred = mean_blur_image(f, KERNEL_SIZE) # Calls the function to blur pictuers and saves them in blurred
+        cv2.imwrite(os.path.join(BLURRED_DIR, os.path.basename(f)), blurred) # Saves the blurred pictures in the blurred pictuers folder
+        print(f"[BLUR] {os.path.basename(f)}") # Prints the progress in the terminal
 
     # Step 2 + 3 + 4
     for f in files:
